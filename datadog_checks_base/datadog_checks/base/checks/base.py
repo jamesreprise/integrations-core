@@ -57,11 +57,6 @@ else:
 
 init_logging()
 
-if datadog_agent.get_config('disable_unsafe_yaml'):
-    from ..ddyaml import monkey_patch_pyyaml
-
-    monkey_patch_pyyaml()
-
 if datadog_agent.get_config('integration_tracing'):
     from ddtrace import patch
 
@@ -80,6 +75,7 @@ if is_affirmative(datadog_agent.get_config('integration_profiling')):
 
 if TYPE_CHECKING:
     import inspect as _module_inspect
+    import multiprocessing
     import ssl  # noqa: F401
     import traceback as _module_traceback
     import unicodedata as _module_unicodedata
@@ -384,16 +380,6 @@ class AgentCheck(object):
             return self.DEFAULT_METRIC_LIMIT
 
         return limit
-
-    @staticmethod
-    def load_config(yaml_str):
-        # type: (str) -> Any
-        """
-        Convenience wrapper to ease programmatic use of this class from the C API.
-        """
-        import yaml
-
-        return yaml.safe_load(yaml_str)
 
     @property
     def http(self) -> RequestsWrapper:
@@ -1477,3 +1463,23 @@ class AgentCheck(object):
 
         for m in metrics:
             self.gauge(m.name, m.value, tags=tags, raw=True)
+
+    @staticmethod
+    def load_config(yaml_str: str) -> Any:
+        """
+        Convenience wrapper to ease programmatic use of this class from the C API.
+        """
+        from multiprocessing import Process, Queue
+
+        queue = Queue()
+        process = Process(target=_load_config, args=(yaml_str, queue))
+        process.start()
+        process.join()
+        return queue.get(timeout=10)
+
+
+@staticmethod
+def _load_config(yaml_str: str, queue: multiprocessing.Queue) -> None:
+    import yaml
+
+    queue.put(yaml.safe_load(yaml_str))
